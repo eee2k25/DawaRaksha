@@ -8,7 +8,11 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 };
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // GitHub Pages serves this project from https://eee2k25.github.io/DawaRaksha/,
+  // so production bundles must reference /DawaRaksha/assets/... . The dev server
+  // is served from the domain root, so it keeps '/'.
+  base: command === 'build' ? '/DawaRaksha/' : '/',
   plugins: [react(), tailwindcss()],
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   define: {
@@ -19,4 +23,4 @@ export default defineConfig({
     // Sandbox/preview proxies (e.g. *.e2b.app) need to be allowed explicitly.
     allowedHosts: ['.e2b.app'],
   },
-});
+}));
