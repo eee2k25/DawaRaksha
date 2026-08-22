@@ -1,15 +1,17 @@
 import {
   Cloud,
   Cpu,
+  ExternalLink,
   Loader2,
   Moon,
   Radio,
   RefreshCw,
+  Settings,
   Sun,
   Upload,
   Wifi,
 } from 'lucide-react';
-import { THINGSPEAK } from '../lib/thingspeak';
+import { channelUrl } from '../lib/thingspeak';
 import type { ConnectionStatus } from '../lib/types';
 import type { ThemeMode } from '../lib/theme';
 
@@ -17,6 +19,7 @@ interface ConnectionBarProps {
   mode: 'cloud' | 'demo';
   onModeChange: (mode: 'cloud' | 'demo') => void;
   status: ConnectionStatus;
+  channelId: number;
   entryCount: number;
   lastEntryId: number | null;
   error: string | null;
@@ -27,6 +30,7 @@ interface ConnectionBarProps {
   onConnectEsp: () => void;
   onRefresh: () => void;
   onPushTest: () => void;
+  onOpenSettings: () => void;
   theme: ThemeMode;
   onThemeChange: (t: ThemeMode) => void;
 }
@@ -35,6 +39,7 @@ export function ConnectionBar({
   mode,
   onModeChange,
   status,
+  channelId,
   entryCount,
   lastEntryId,
   error,
@@ -45,6 +50,7 @@ export function ConnectionBar({
   onConnectEsp,
   onRefresh,
   onPushTest,
+  onOpenSettings,
   theme,
   onThemeChange,
 }: ConnectionBarProps) {
@@ -177,7 +183,14 @@ export function ConnectionBar({
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-muted)]">
                 Channel{' '}
-                <span className="font-mono text-[var(--accent)]">{THINGSPEAK.channelId}</span>
+                <a
+                  href={channelUrl({ channelId, readKey: '', writeKey: '' })}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-[var(--accent)] underline decoration-dotted underline-offset-2"
+                >
+                  {channelId}
+                </a>
                 {' · '}
                 {mode === 'cloud'
                   ? entryCount > 0
@@ -214,6 +227,25 @@ export function ConnectionBar({
                 </button>
               </>
             )}
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              title="ThingSpeak channel settings"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-[11px] font-semibold text-[var(--text-muted)] hover:text-[var(--text)]"
+            >
+              <Settings size={12} />
+              Channel
+            </button>
+            <a
+              href={channelUrl({ channelId, readKey: '', writeKey: '' })}
+              target="_blank"
+              rel="noreferrer"
+              title="Open channel on thingspeak.com"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-[11px] font-semibold text-[var(--text-muted)] hover:text-[var(--text)]"
+            >
+              <ExternalLink size={12} />
+              View
+            </a>
           </div>
         </div>
       </div>

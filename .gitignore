@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Local env — channel credentials live here, never commit real keys
+.env
+.env.local
+.env.*.local
+
+# Firmware secrets (copy from secrets.example.h)
+firmware/**/secrets.h
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Vite / tooling caches
+.vite/
+*.tsbuildinfo

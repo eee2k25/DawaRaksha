@@ -11,12 +11,13 @@ import {
   Timer,
 } from 'lucide-react';
 import { formatDateTime, statusColor } from '../lib/format';
-import { FIELD_MAP, THINGSPEAK } from '../lib/thingspeak';
+import { FIELD_MAP } from '../lib/thingspeak';
 import type { SystemStatus } from '../lib/types';
 
 interface SystemPanelProps {
   system: SystemStatus;
   channelId: number;
+  readKey: string;
   entryCount: number;
   lastEntryId: number | null;
   mode: 'cloud' | 'demo';
@@ -32,6 +33,7 @@ const LINKS = [
 export function SystemPanel({
   system,
   channelId,
+  readKey,
   entryCount,
   lastEntryId,
   mode,
@@ -87,7 +89,7 @@ export function SystemPanel({
             <Row
               icon={KeyRound}
               label="Read key"
-              value={`${THINGSPEAK.readKey.slice(0, 4)}…${THINGSPEAK.readKey.slice(-4)}`}
+              value={`${readKey.slice(0, 4)}…${readKey.slice(-4)}`}
               mono
             />
             <Row icon={Radio} label="Data mode" value={mode === 'cloud' ? 'ESP / Cloud' : 'Simulate'} />

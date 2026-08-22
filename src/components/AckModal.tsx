@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ClipboardCheck, X } from 'lucide-react';
 import { suggestedActionsFor } from '../lib/alertEngine';
 import type { AlertEvent } from '../lib/types';
@@ -34,12 +34,6 @@ export function AckModal({ alert, bulkCount, onClose, onConfirm }: AckModalProps
       return 'Operator-1';
     }
   });
-
-  useEffect(() => {
-    if (!open) return;
-    setAction(actions[0]?.value ?? 'monitoring');
-    setNote('');
-  }, [open, alert?.id, actions]);
 
   if (!open) return null;
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Download,
   Droplets,
   Package,
   Scale,
@@ -19,6 +20,9 @@ import { ThresholdsPanel } from './components/ThresholdsPanel';
 import { ContainerStatus } from './components/ContainerStatus';
 import { ConnectionBar } from './components/ConnectionBar';
 import { FaultSimulator } from './components/FaultSimulator';
+import { AckModal } from './components/AckModal';
+import { ThingSpeakSettingsModal } from './components/ThingSpeakSettingsModal';
+import { ThingSpeakCharts } from './components/ThingSpeakCharts';
 import {
   CONTAINER,
   SEED_ALERTS,
@@ -33,14 +37,21 @@ import {
   THINGSPEAK,
   deriveEventCode,
   fetchChannelFeeds,
+  fetchLastFeed,
+  historyToCsv,
+  loadThingSpeakConfig,
   parseFeed,
+  saveThingSpeakConfig,
   toHistoryPoint,
   writeFeed,
   type ParsedFeed,
+  type ThingSpeakConfig,
 } from './lib/thingspeak';
 import { FAULTS, applyFault, faultAlert, type FaultId } from './lib/faults';
+import { getGasQuality } from './lib/gasQuality';
 import { useTheme } from './lib/theme';
 import type {
+  AckAudit,
   AlertEvent,
   ConnectionStatus,
   HistoryPoint,
@@ -171,7 +182,6 @@ export default function App() {
   const [mode, setMode] = useState<DataMode>('cloud');
   const [thresholds, setThresholds] = useState<Thresholds>(THRESHOLDS);
   const [reading, setReading] = useState<SensorReading>(createInitialReading);
-  const [prevReading, setPrevReading] = useState<SensorReading | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [system, setSystem] = useState(createSystemStatus);
@@ -187,6 +197,11 @@ export default function App() {
   const [cloudStatus, setCloudStatus] = useState<ConnectionStatus>('degraded');
   const [lastFault, setLastFault] = useState<string | null>(null);
   const [faultBusy, setFaultBusy] = useState(false);
+  /** ThingSpeak channel configuration (runtime-configurable via Settings) */
+  const [tsConfig, setTsConfig] = useState<ThingSpeakConfig>(loadThingSpeakConfig);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Compliance-ack modal target: single alert, or 'bulk' for acknowledge-all */
+  const [ackTarget, setAckTarget] = useState<AlertEvent | 'bulk' | null>(null);
   /** Holds a simulated fault over the live stream for a short window */
   const faultHoldRef = useRef<SensorReading | null>(null);
   const faultHoldUntilRef = useRef(0);
@@ -194,7 +209,16 @@ export default function App() {
   const prevRef = useRef<SensorReading | null>(null);
   const lastEntryRef = useRef<number | null>(null);
   const thresholdsRef = useRef(thresholds);
-  thresholdsRef.current = thresholds;
+  const tsConfigRef = useRef(tsConfig);
+  const pollInFlightRef = useRef(false);
+
+  useEffect(() => {
+    thresholdsRef.current = thresholds;
+  }, [thresholds]);
+
+  useEffect(() => {
+    tsConfigRef.current = tsConfig;
+  }, [tsConfig]);
 
   const applyCloudFeeds = useCallback((feeds: ParsedFeed[]) => {
     if (!feeds.length) {
@@ -252,7 +276,6 @@ export default function App() {
     }
 
     prevRef.current = latest;
-    setPrevReading(prev);
     setReading(latest);
     setHistory(sorted.map(toHistoryPoint));
     setEntryCount(sorted.length);
@@ -272,10 +295,10 @@ export default function App() {
     }));
   }, []);
 
-  const syncCloud = useCallback(async () => {
+  const syncCloud = useCallback(async (cfg: ThingSpeakConfig = tsConfigRef.current) => {
     setSyncing(true);
     try {
-      const data = await fetchChannelFeeds(THINGSPEAK.historyResults);
+      const data = await fetchChannelFeeds(THINGSPEAK.historyResults, cfg);
       const parsed = data.feeds
         .filter((f) => f.created_at && (f.field1 != null || f.field2 != null))
         .map(parseFeed);
@@ -303,6 +326,68 @@ export default function App() {
       setSyncing(false);
     }
   }, [applyCloudFeeds]);
+
+  /**
+   * Quota-friendly heartbeat: polls only the latest entry (last.json).
+   * A full history sync fires just when a new entry_id appears.
+   */
+  const pollLast = useCallback(async () => {
+    if (pollInFlightRef.current) return;
+    pollInFlightRef.current = true;
+    try {
+      const last = await fetchLastFeed(tsConfigRef.current);
+      if (!last) {
+        setEntryCount(0);
+        setLastEntryId(null);
+        setCloudStatus('degraded');
+        setEspConnected(false);
+        setCloudError('Channel is empty — connect the ESP32 or push a test reading.');
+        return;
+      }
+      const fresh = Date.now() - last.timestamp.getTime() < 10 * 60 * 1000;
+      setEspConnected(fresh);
+      if (lastEntryRef.current === null || last.entryId !== lastEntryRef.current) {
+        await syncCloud(); // new data arrived → refresh history + alerts
+      } else {
+        setCloudError(null);
+        setCloudStatus('online');
+        setSystem((s) => ({
+          ...s,
+          thingspeak: 'online',
+          wifi: 'online',
+          esp32: fresh ? 'online' : 'degraded',
+        }));
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown ThingSpeak error';
+      setCloudError(msg);
+      setCloudStatus('offline');
+      setEspConnected(false);
+      setSystem((s) => ({
+        ...s,
+        thingspeak: 'offline',
+        wifi: 'degraded',
+      }));
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  }, [syncCloud]);
+
+  const applyConfig = useCallback(
+    async (cfg: ThingSpeakConfig) => {
+      saveThingSpeakConfig(cfg);
+      tsConfigRef.current = cfg;
+      setTsConfig(cfg);
+      setSettingsOpen(false);
+      setMode('cloud');
+      // Force alert re-seed against the new channel
+      lastEntryRef.current = null;
+      prevRef.current = null;
+      setCloudError(null);
+      await syncCloud(cfg);
+    },
+    [syncCloud]
+  );
 
   const connectEsp = useCallback(async () => {
     setConnectingEsp(true);
@@ -345,18 +430,19 @@ export default function App() {
   // Cloud polling
   useEffect(() => {
     if (mode !== 'cloud') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount / mode switch
     void syncCloud();
     if (!live) return;
-    const id = window.setInterval(() => void syncCloud(), THINGSPEAK.pollMs);
+    const id = window.setInterval(() => void pollLast(), THINGSPEAK.pollMs);
     return () => window.clearInterval(id);
-  }, [mode, live, syncCloud]);
+  }, [mode, live, syncCloud, pollLast, tsConfig]);
 
   // Demo stream
   useEffect(() => {
     if (mode !== 'demo' || !live) return;
     const id = window.setInterval(() => {
       setReading((prev) => {
-        let next =
+        const next =
           faultHoldRef.current && Date.now() < faultHoldUntilRef.current
             ? { ...faultHoldRef.current, timestamp: new Date() }
             : nextReading(prev);
@@ -366,8 +452,7 @@ export default function App() {
           faultHoldRef.current = null;
         }
 
-        setPrevReading(prev);
-        prevRef.current = next;
+            prevRef.current = next;
 
         const newAlerts = evaluateAlerts(next, prev, thresholdsRef.current);
         if (newAlerts.length) {
@@ -420,7 +505,7 @@ export default function App() {
         gasRaw: Math.round(150 + Math.random() * 80),
       };
       const eventCode = deriveEventCode(payload, thresholdsRef.current);
-      await writeFeed({ ...payload, eventCode });
+      await writeFeed({ ...payload, eventCode }, tsConfigRef.current);
       await new Promise((r) => setTimeout(r, 800));
       await syncCloud();
     } catch (err) {
@@ -441,8 +526,7 @@ export default function App() {
       faultHoldRef.current = next;
       faultHoldUntilRef.current = Date.now() + (faultId === 'clear' ? 2000 : 45000);
 
-      setPrevReading(prev);
-      setReading(next);
+        setReading(next);
       setLastTick(next.timestamp);
       setLastFault(def.code);
 
@@ -468,16 +552,19 @@ export default function App() {
       if (mode === 'cloud' && faultId !== 'clear') {
         try {
           const eventCode = deriveEventCode(next, thresholdsRef.current);
-          await writeFeed({
-            temperature: next.temperature,
-            humidity: next.humidity,
-            mass: next.mass,
-            stockLevel: next.stockLevel,
-            door: next.door,
-            leak: next.leak,
-            gasRaw: next.gasRaw,
-            eventCode,
-          });
+          await writeFeed(
+            {
+              temperature: next.temperature,
+              humidity: next.humidity,
+              mass: next.mass,
+              stockLevel: next.stockLevel,
+              door: next.door,
+              leak: next.leak,
+              gasRaw: next.gasRaw,
+              eventCode,
+            },
+            tsConfigRef.current
+          );
           await new Promise((r) => setTimeout(r, 600));
           await syncCloud();
         } catch (err) {
@@ -499,13 +586,43 @@ export default function App() {
 
   const overall = deriveOverall(reading, alerts, thresholds);
 
-  const ack = (id: string) =>
+  /** Record & acknowledge — writes a compliance audit trail onto the alert(s). */
+  const confirmAck = (payload: {
+    action: string;
+    note: string;
+    operator: string;
+    alertId: string | 'ALL';
+  }) => {
+    const audit: AckAudit = {
+      action: payload.action,
+      note: payload.note || undefined,
+      operator: payload.operator,
+      at: new Date(),
+    };
     setAlerts((list) =>
-      list.map((a) => (a.id === id ? { ...a, acknowledged: true } : a))
+      list.map((a) => {
+        if (payload.alertId !== 'ALL' && a.id !== payload.alertId) return a;
+        return a.acknowledged ? a : { ...a, acknowledged: true, ack: audit };
+      })
     );
+    setAckTarget(null);
+  };
 
-  const ackAll = () =>
-    setAlerts((list) => list.map((a) => ({ ...a, acknowledged: true })));
+  const exportCsv = () => {
+    if (!history.length) return;
+    const csv = historyToCsv(history);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dawaraksh-ch${tsConfig.channelId}-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const tempStatus =
     reading.temperature > thresholds.tempMax || reading.temperature < thresholds.tempMin
@@ -558,7 +675,7 @@ export default function App() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         cloudMode={mode === 'cloud'}
-        channelId={THINGSPEAK.channelId}
+        channelId={tsConfig.channelId}
       />
 
       <div className="relative flex min-w-0 flex-1 flex-col">
@@ -580,7 +697,7 @@ export default function App() {
                 className="text-[11px] font-semibold uppercase tracking-[0.22em]"
                 style={{ color: 'var(--accent)' }}
               >
-                {CONTAINER.id} · PHARMA//VAULT · CH {THINGSPEAK.channelId}
+                {CONTAINER.id} · PHARMA//VAULT · CH {tsConfig.channelId}
               </p>
               <h2
                 className="font-display text-2xl font-bold tracking-tight sm:text-3xl"
@@ -599,6 +716,7 @@ export default function App() {
             mode={mode}
             onModeChange={(m) => (m === 'demo' ? enterSimulate() : void connectEsp())}
             status={cloudStatus}
+            channelId={tsConfig.channelId}
             entryCount={entryCount}
             lastEntryId={lastEntryId}
             error={cloudError}
@@ -609,6 +727,7 @@ export default function App() {
             onConnectEsp={() => void connectEsp()}
             onRefresh={() => void syncCloud()}
             onPushTest={() => void pushTestReading()}
+            onOpenSettings={() => setSettingsOpen(true)}
             theme={theme}
             onThemeChange={setTheme}
           />
@@ -672,7 +791,7 @@ export default function App() {
                   unit="ADC"
                   subtitle="MQ-series · F7"
                   icon={Wind}
-                  tone={gasStatus === 'ok' ? 'amber' : 'rose'}
+                  tone={gasStatus === 'ok' ? 'emerald' : 'rose'}
                   status={gasStatus}
                 />
                 <StatCard
@@ -719,7 +838,7 @@ export default function App() {
                       View all →
                     </button>
                   </div>
-                  <AlertList alerts={alerts} onAck={ack} compact limit={6} />
+                  <AlertList alerts={alerts} onAckRequest={setAckTarget} compact limit={6} />
                 </div>
               </div>
             </div>
@@ -810,6 +929,8 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              <GasQualityCard raw={reading.gasRaw} threshold={thresholds.gasThreshold} />
             </div>
           )}
 
@@ -825,7 +946,7 @@ export default function App() {
                   </p>
                 </div>
                 <button
-                  onClick={ackAll}
+                  onClick={() => setAckTarget('bulk')}
                   disabled={!unacked}
                   className="rounded-xl px-4 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
                   style={{
@@ -837,47 +958,65 @@ export default function App() {
                   Acknowledge all
                 </button>
               </div>
-              <AlertList alerts={alerts} onAck={ack} />
+              <AlertList alerts={alerts} onAckRequest={setAckTarget} />
             </div>
           )}
 
           {nav === 'history' && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {(['6h', '12h', '24h'] as const).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setRange(r)}
-                    className="rounded-full px-4 py-1.5 text-xs font-semibold transition"
-                    style={
-                      range === r
-                        ? {
-                            background: 'var(--accent-soft)',
-                            color: 'var(--accent)',
-                            boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent)',
-                          }
-                        : {
-                            background: 'var(--surface)',
-                            color: 'var(--text-muted)',
-                          }
-                    }
-                  >
-                    {r}
-                  </button>
-                ))}
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {(['6h', '12h', '24h'] as const).map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setRange(r)}
+                      className="rounded-full px-4 py-1.5 text-xs font-semibold transition"
+                      style={
+                        range === r
+                          ? {
+                              background: 'var(--accent-soft)',
+                              color: 'var(--accent)',
+                              boxShadow:
+                                'inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent)',
+                            }
+                          : {
+                              background: 'var(--surface)',
+                              color: 'var(--text-muted)',
+                            }
+                      }
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={exportCsv}
+                  disabled={!history.length}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{
+                    borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)',
+                    background: 'var(--accent-soft)',
+                    color: 'var(--accent)',
+                  }}
+                >
+                  <Download size={12} />
+                  Export CSV
+                </button>
               </div>
               {history.length > 1 ? (
                 <HistoryCharts data={history} range={range} />
               ) : (
                 <EmptyHistory />
               )}
+              <ThingSpeakCharts config={tsConfig} />
             </div>
           )}
 
           {nav === 'system' && (
             <SystemPanel
               system={system}
-              channelId={THINGSPEAK.channelId}
+              channelId={tsConfig.channelId}
+              readKey={tsConfig.readKey}
               entryCount={entryCount}
               lastEntryId={lastEntryId}
               mode={mode}
@@ -898,7 +1037,8 @@ export default function App() {
               className="font-display text-xs font-semibold tracking-[0.2em]"
               style={{ color: 'var(--text-faint)' }}
             >
-              DAWARAKSH · PHARMA//VAULT · THINGSPEAK {THINGSPEAK.channelId}
+              DAWARAKSH v{__APP_VERSION__} · PHARMA//VAULT · THINGSPEAK{' '}
+              {tsConfig.channelId}
             </p>
             <p className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               IoT-Enabled Smart Container · Bharat Institute of Engineering and Technology · Guide:
@@ -907,6 +1047,24 @@ export default function App() {
           </footer>
         </main>
       </div>
+
+      {ackTarget && (
+        <AckModal
+          key={ackTarget === 'bulk' ? 'bulk' : ackTarget.id}
+          alert={ackTarget === 'bulk' ? null : ackTarget}
+          bulkCount={ackTarget === 'bulk' ? unacked : undefined}
+          onClose={() => setAckTarget(null)}
+          onConfirm={confirmAck}
+        />
+      )}
+
+      {settingsOpen && (
+        <ThingSpeakSettingsModal
+          config={tsConfig}
+          onClose={() => setSettingsOpen(false)}
+          onSave={(cfg) => void applyConfig(cfg)}
+        />
+      )}
     </div>
   );
 }
@@ -927,6 +1085,58 @@ function EmptyHistory() {
         Use <strong>Connect ESP</strong>, <strong>Push test reading</strong>, or inject a fault to
         populate ThingSpeak fields 1–8.
       </p>
+    </div>
+  );
+}
+
+function GasQualityCard({ raw, threshold }: { raw: number; threshold: number }) {
+  const gq = getGasQuality(raw, threshold);
+  const tone =
+    gq.tone === 'crit' ? 'var(--danger)' : gq.tone === 'warn' ? 'var(--warn)' : 'var(--ok)';
+  const toneSoft =
+    gq.tone === 'crit'
+      ? 'var(--danger-soft)'
+      : gq.tone === 'warn'
+        ? 'color-mix(in srgb, var(--warn) 12%, transparent)'
+        : 'var(--ok-soft)';
+  return (
+    <div
+      className="rounded-2xl border p-4"
+      style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span
+            className="flex h-9 w-9 items-center justify-center rounded-xl"
+            style={{ background: toneSoft, color: tone }}
+          >
+            <Wind size={16} />
+          </span>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              {gq.label}
+            </p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {gq.description}
+            </p>
+          </div>
+        </div>
+        <div className="min-w-40 flex-1 sm:max-w-64">
+          <div className="mb-1 flex justify-between text-[10px]" style={{ color: 'var(--text-faint)' }}>
+            <span>Risk score</span>
+            <span className="font-mono">{gq.riskPct}%</span>
+          </div>
+          <div
+            className="h-2 overflow-hidden rounded-full"
+            style={{ background: 'var(--border)' }}
+          >
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${gq.riskPct}%`, background: tone }}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

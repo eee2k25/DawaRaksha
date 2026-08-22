@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- context + hooks intentionally co-located */
 import {
   createContext,
   useCallback,

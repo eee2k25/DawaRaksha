@@ -21,6 +21,7 @@ interface HistoryChartsProps {
 export function HistoryCharts({ data, range }: HistoryChartsProps) {
   const ct = useChartTheme();
   const hours = range === '6h' ? 6 : range === '12h' ? 12 : 24;
+  // eslint-disable-next-line react-hooks/purity -- cutoff tracks "now" on each render by design
   const cutoff = Date.now() - hours * 60 * 60 * 1000;
   const filtered = data.filter((d) => d.timestamp >= cutoff);
   const step = Math.max(1, Math.floor(filtered.length / 48));
