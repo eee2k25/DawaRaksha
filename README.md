@@ -86,6 +86,33 @@ channel**, either:
 You can also press **Push test reading** to write a synthetic sample without
 hardware.
 
+## Deployment (GitHub Pages)
+
+Live site: **https://eee2k25.github.io/DawaRaksha/**
+
+Deployment is automated by
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): every push to
+`main` lints, builds and publishes `dist/` to Pages.
+
+Two things this repo depends on, both easy to get wrong:
+
+1. **Pages source must be “GitHub Actions”** — in *Settings → Pages → Build and
+   deployment → Source*. If it is left on *Deploy from a branch*, Pages serves
+   the repository root, which contains only uncompiled sources (`src/main.tsx`),
+   and the browser renders a blank page.
+2. **`base` must match the repo name.** The site is served from the
+   `/DawaRaksha/` sub-path, so `vite.config.ts` sets `base: '/DawaRaksha/'` for
+   production builds. Without it, bundles are requested from
+   `eee2k25.github.io/assets/…` and 404. If the repository is ever renamed,
+   update `base` to match.
+
+`public/.nojekyll` stops GitHub's Jekyll pass from discarding build files whose
+names begin with an underscore.
+
+To supply a non-default ThingSpeak channel to the deployed build, set repository
+variable `VITE_THINGSPEAK_CHANNEL_ID` and secret `VITE_THINGSPEAK_READ_KEY`;
+otherwise the bundled demo channel is used.
+
 ## Flash the firmware
 
 See [`firmware/esp32/`](firmware/esp32/) — Arduino sketch for the ESP32 with
@@ -100,6 +127,7 @@ excursions.
 │   └── lib/             # ThingSpeak client, alert engine, simulation
 ├── firmware/esp32/      # Arduino firmware for the container
 ├── docs/                # project presentation
+├── .github/workflows/   # CI: build + deploy to GitHub Pages
 └── .env.example         # optional build-time channel config
 ```
 
