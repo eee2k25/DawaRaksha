@@ -1,6 +1,6 @@
 # DawaRaksh · IoT-Enabled Smart Medicine Container
 
-**v1.0.0** · Cold-chain monitoring for medicine storage — ESP32 sensing → ThingSpeak cloud → live operations dashboard.
+**v1.5.0** · Cold-chain monitoring for medicine storage — ESP32 sensing → ThingSpeak cloud → live operations dashboard.
 
 DawaRaksh watches a medicine container around the clock: temperature and
 humidity (cold-chain band **2–8 °C / ≤ 60 %RH**), stock fill level, payload
@@ -92,19 +92,6 @@ Live site: **https://eee2k25.github.io/DawaRaksha/**
 
 Deployment is automated by a workflow that lints, builds and publishes `dist/`
 to Pages on every push to `main`.
-
-> **One manual step:** the workflow currently sits at
-> [`.github/pages-deploy.yml`](.github/pages-deploy.yml) and must be moved to
-> `.github/workflows/deploy.yml` to become active:
->
-> ```bash
-> mkdir -p .github/workflows
-> git mv .github/pages-deploy.yml .github/workflows/deploy.yml
-> git commit -m "ci: activate Pages deploy workflow" && git push
-> ```
->
-> It was committed outside `workflows/` because the automation token that
-> created it lacks GitHub's `workflows` permission; a normal user push has it.
 
 Two things this repo depends on, both easy to get wrong:
 
