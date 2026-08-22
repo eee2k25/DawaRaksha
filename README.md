@@ -90,9 +90,21 @@ hardware.
 
 Live site: **https://eee2k25.github.io/DawaRaksha/**
 
-Deployment is automated by
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): every push to
-`main` lints, builds and publishes `dist/` to Pages.
+Deployment is automated by a workflow that lints, builds and publishes `dist/`
+to Pages on every push to `main`.
+
+> **One manual step:** the workflow currently sits at
+> [`.github/pages-deploy.yml`](.github/pages-deploy.yml) and must be moved to
+> `.github/workflows/deploy.yml` to become active:
+>
+> ```bash
+> mkdir -p .github/workflows
+> git mv .github/pages-deploy.yml .github/workflows/deploy.yml
+> git commit -m "ci: activate Pages deploy workflow" && git push
+> ```
+>
+> It was committed outside `workflows/` because the automation token that
+> created it lacks GitHub's `workflows` permission; a normal user push has it.
 
 Two things this repo depends on, both easy to get wrong:
 
