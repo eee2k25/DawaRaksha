@@ -1,21 +1,88 @@
 import type { DoorState, HistoryPoint, LeakState, SensorReading } from './types';
 
 /**
- * DawaRaksh ThingSpeak channel configuration
- * Field map (channel 3444984):
+ * DawaRaksh ⇄ ThingSpeak integration
+ * ---------------------------------------------------------------------------
+ * Field map (channel 3444984 by default):
  *  1 Temperature · 2 Humidity · 3 Mass · 4 Stock level
  *  5 Door State  · 6 Leak State · 7 Gas Raw · 8 Event Code
+ *
+ * The channel can be changed at runtime via the in-app Settings panel
+ * (persisted in localStorage) or at build time via VITE_THINGSPEAK_* env vars.
  */
-export const THINGSPEAK = {
+
+export interface ThingSpeakConfig {
+  channelId: number;
+  readKey: string;
+  writeKey: string;
+}
+
+/** Channel that ships with the project — works out of the box. */
+export const DEFAULT_THINGSPEAK: ThingSpeakConfig = {
   channelId: 3444984,
   readKey: 'DHSLAMWUOPOPMVVY',
   writeKey: '2JEC9DR8ZHUJ8T0N',
+};
+
+export const THINGSPEAK = {
   baseUrl: 'https://api.thingspeak.com',
   /** Free-tier friendly poll interval (ms) */
   pollMs: 15_000,
-  /** Max historical points to pull */
-  historyResults: 200,
+  /** Max historical points to pull (ThingSpeak free-tier max per request) */
+  historyResults: 800,
 } as const;
+
+const STORAGE_KEY = 'dawaraksh-thingspeak-config';
+
+function envConfig(): Partial<ThingSpeakConfig> {
+  const env = import.meta.env as Record<string, string | undefined>;
+  const cfg: Partial<ThingSpeakConfig> = {};
+  const id = parseInt(env.VITE_THINGSPEAK_CHANNEL_ID ?? '', 10);
+  if (Number.isFinite(id) && id > 0) cfg.channelId = id;
+  if (env.VITE_THINGSPEAK_READ_KEY) cfg.readKey = env.VITE_THINGSPEAK_READ_KEY;
+  if (env.VITE_THINGSPEAK_WRITE_KEY) cfg.writeKey = env.VITE_THINGSPEAK_WRITE_KEY;
+  return cfg;
+}
+
+/** localStorage override → env vars → bundled default. */
+export function loadThingSpeakConfig(): ThingSpeakConfig {
+  let stored: Partial<ThingSpeakConfig> = {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) stored = JSON.parse(raw) as Partial<ThingSpeakConfig>;
+  } catch {
+    /* corrupted entry — ignore */
+  }
+  const merged: ThingSpeakConfig = { ...DEFAULT_THINGSPEAK, ...envConfig(), ...stored };
+  if (!Number.isFinite(merged.channelId) || merged.channelId <= 0) {
+    merged.channelId = DEFAULT_THINGSPEAK.channelId;
+  }
+  return merged;
+}
+
+export function saveThingSpeakConfig(cfg: ThingSpeakConfig) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+  } catch {
+    /* storage unavailable — config stays for this session only */
+  }
+}
+
+export function resetThingSpeakConfig() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isDefaultConfig(cfg: ThingSpeakConfig): boolean {
+  return (
+    cfg.channelId === DEFAULT_THINGSPEAK.channelId &&
+    cfg.readKey === DEFAULT_THINGSPEAK.readKey &&
+    cfg.writeKey === DEFAULT_THINGSPEAK.writeKey
+  );
+}
 
 export interface ThingSpeakFeed {
   created_at: string;
@@ -107,11 +174,12 @@ export function toHistoryPoint(p: ParsedFeed): HistoryPoint {
 }
 
 export async function fetchChannelFeeds(
-  results = THINGSPEAK.historyResults
+  results = THINGSPEAK.historyResults,
+  cfg: ThingSpeakConfig = loadThingSpeakConfig()
 ): Promise<ThingSpeakResponse> {
   const url =
-    `${THINGSPEAK.baseUrl}/channels/${THINGSPEAK.channelId}/feeds.json` +
-    `?api_key=${encodeURIComponent(THINGSPEAK.readKey)}` +
+    `${THINGSPEAK.baseUrl}/channels/${cfg.channelId}/feeds.json` +
+    `?api_key=${encodeURIComponent(cfg.readKey)}` +
     `&results=${results}`;
 
   const res = await fetch(url);
@@ -121,10 +189,13 @@ export async function fetchChannelFeeds(
   return (await res.json()) as ThingSpeakResponse;
 }
 
-export async function fetchLastFeed(): Promise<ParsedFeed | null> {
+/** Cheap poll — one entry instead of the full history. */
+export async function fetchLastFeed(
+  cfg: ThingSpeakConfig = loadThingSpeakConfig()
+): Promise<ParsedFeed | null> {
   const url =
-    `${THINGSPEAK.baseUrl}/channels/${THINGSPEAK.channelId}/feeds/last.json` +
-    `?api_key=${encodeURIComponent(THINGSPEAK.readKey)}`;
+    `${THINGSPEAK.baseUrl}/channels/${cfg.channelId}/feeds/last.json` +
+    `?api_key=${encodeURIComponent(cfg.readKey)}`;
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -139,6 +210,22 @@ export async function fetchLastFeed(): Promise<ParsedFeed | null> {
   return parseFeed(feed);
 }
 
+/** Channel metadata — used by the Settings panel to verify a configuration. */
+export async function fetchChannelInfo(
+  cfg: ThingSpeakConfig = loadThingSpeakConfig()
+): Promise<ThingSpeakChannelMeta> {
+  const url =
+    `${THINGSPEAK.baseUrl}/channels/${cfg.channelId}.json` +
+    `?api_key=${encodeURIComponent(cfg.readKey)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('Channel not found — check the channel ID');
+    if (res.status === 401) throw new Error('Read key rejected for this channel');
+    throw new Error(`Channel check failed (${res.status})`);
+  }
+  return (await res.json()) as ThingSpeakChannelMeta;
+}
+
 export interface WritePayload {
   temperature: number;
   humidity: number;
@@ -151,9 +238,12 @@ export interface WritePayload {
 }
 
 /** Upload one reading (ESP32 equivalent). Free tier: ≥15s between writes. */
-export async function writeFeed(payload: WritePayload): Promise<number> {
+export async function writeFeed(
+  payload: WritePayload,
+  cfg: ThingSpeakConfig = loadThingSpeakConfig()
+): Promise<number> {
   const params = new URLSearchParams({
-    api_key: THINGSPEAK.writeKey,
+    api_key: cfg.writeKey,
     field1: String(payload.temperature),
     field2: String(payload.humidity),
     field3: String(payload.mass),
@@ -195,6 +285,43 @@ export function deriveEventCode(
   if (reading.gasRaw > thresholds.gasThreshold) return 'EVT-GAS';
   if (reading.door === 'open') return 'EVT-DOOR';
   return 'OK';
+}
+
+/** Embeddable ThingSpeak chart URL for a field (works with a read key). */
+export function chartUrl(
+  field: number,
+  cfg: ThingSpeakConfig = loadThingSpeakConfig(),
+  results = 60
+): string {
+  const params = new URLSearchParams({
+    api_key: cfg.readKey,
+    width: 'auto',
+    height: '260',
+    results: String(results),
+  });
+  return `https://thingspeak.com/channels/${cfg.channelId}/charts/${field}?${params.toString()}`;
+}
+
+export function channelUrl(cfg: ThingSpeakConfig = loadThingSpeakConfig()): string {
+  return `https://thingspeak.com/channels/${cfg.channelId}`;
+}
+
+/** Serialize history to CSV for reports / offline analysis. */
+export function historyToCsv(points: HistoryPoint[]): string {
+  const header = 'timestamp,iso_time,temperature_c,humidity_pct,mass_kg,stock_pct,gas_raw';
+  const rows = points.map((p) => {
+    const iso = new Date(p.timestamp).toISOString();
+    return [
+      p.timestamp,
+      iso,
+      p.temperature.toFixed(2),
+      p.humidity.toFixed(2),
+      p.mass.toFixed(3),
+      p.stockLevel.toFixed(1),
+      String(p.gasRaw),
+    ].join(',');
+  });
+  return [header, ...rows].join('\n');
 }
 
 export const FIELD_MAP = [

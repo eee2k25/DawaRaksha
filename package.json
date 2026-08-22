@@ -1,7 +1,8 @@
 {
-  "name": "placeholder-model-2",
+  "name": "dawaraksha",
+  "description": "IoT-enabled smart medicine container — ESP32 + ThingSpeak cold-chain monitoring dashboard",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
