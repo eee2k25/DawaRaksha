@@ -174,6 +174,24 @@ function mergeAlerts(existing: AlertEvent[], incoming: AlertEvent[]): AlertEvent
   return [...fresh, ...existing].slice(0, 100);
 }
 
+/**
+ * Plausible synthetic sample derived from the current reading — shared by the
+ * "Push test reading" and "Seed 1d ago" actions.
+ */
+function syntheticWritePayload(base: SensorReading, thresholds: Thresholds) {
+  const jitter = (n: number, a: number) => Math.round((n + (Math.random() - 0.5) * a) * 10) / 10;
+  const payload = {
+    temperature: jitter(base.temperature || 5, 0.6),
+    humidity: jitter(base.humidity || 47, 3),
+    mass: Math.round((base.mass || 3.3) * 100) / 100,
+    stockLevel: Math.max(20, jitter(base.stockLevel || 68, 2)),
+    door: Math.random() > 0.9 ? ('open' as const) : ('closed' as const),
+    leak: Math.random() > 0.97 ? ('wet' as const) : ('dry' as const),
+    gasRaw: Math.round(150 + Math.random() * 80),
+  };
+  return { ...payload, eventCode: deriveEventCode(payload, thresholds) };
+}
+
 export default function App() {
   const { theme, setTheme } = useTheme();
   const [nav, setNav] = useState<NavId>('overview');
@@ -189,6 +207,7 @@ export default function App() {
   const [lastTick, setLastTick] = useState(() => new Date());
   const [syncing, setSyncing] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [seedingBackdated, setSeedingBackdated] = useState(false);
   const [connectingEsp, setConnectingEsp] = useState(false);
   const [espConnected, setEspConnected] = useState(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
@@ -492,20 +511,8 @@ export default function App() {
     setPushing(true);
     setCloudError(null);
     try {
-      const base = reading;
-      const jitter = (n: number, a: number) =>
-        Math.round((n + (Math.random() - 0.5) * a) * 10) / 10;
-      const payload = {
-        temperature: jitter(base.temperature || 5, 0.6),
-        humidity: jitter(base.humidity || 47, 3),
-        mass: Math.round((base.mass || 3.3) * 100) / 100,
-        stockLevel: Math.max(20, jitter(base.stockLevel || 68, 2)),
-        door: Math.random() > 0.9 ? ('open' as const) : ('closed' as const),
-        leak: Math.random() > 0.97 ? ('wet' as const) : ('dry' as const),
-        gasRaw: Math.round(150 + Math.random() * 80),
-      };
-      const eventCode = deriveEventCode(payload, thresholdsRef.current);
-      await writeFeed({ ...payload, eventCode }, tsConfigRef.current);
+      const payload = syntheticWritePayload(reading, thresholdsRef.current);
+      await writeFeed(payload, tsConfigRef.current);
       await new Promise((r) => setTimeout(r, 800));
       await syncCloud();
     } catch (err) {
@@ -513,6 +520,29 @@ export default function App() {
       setCloudError(msg);
     } finally {
       setPushing(false);
+    }
+  }, [reading, syncCloud]);
+
+  /**
+   * Writes one sample timestamped 1 day ago via ThingSpeak's `created_at`.
+   * Handy when the channel has gone quiet (the header shows feed age, so a
+   * stale channel reads "87d ago"). Offsets are jittered because ThingSpeak
+   * rejects duplicate created_at values.
+   */
+  const seedBackdatedReading = useCallback(async () => {
+    setSeedingBackdated(true);
+    setCloudError(null);
+    try {
+      const payload = syntheticWritePayload(reading, thresholdsRef.current);
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000 - Math.floor(Math.random() * 20) * 60 * 1000;
+      await writeFeed(payload, tsConfigRef.current, { createdAt: new Date(oneDayAgo) });
+      await new Promise((r) => setTimeout(r, 800));
+      await syncCloud();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Backdated write failed';
+      setCloudError(msg);
+    } finally {
+      setSeedingBackdated(false);
     }
   }, [reading, syncCloud]);
 
@@ -722,11 +752,13 @@ export default function App() {
             error={cloudError}
             syncing={syncing}
             pushing={pushing}
+            seedingBackdated={seedingBackdated}
             connectingEsp={connectingEsp}
             espConnected={espConnected}
             onConnectEsp={() => void connectEsp()}
             onRefresh={() => void syncCloud()}
             onPushTest={() => void pushTestReading()}
+            onSeedBackdated={() => void seedBackdatedReading()}
             onOpenSettings={() => setSettingsOpen(true)}
             theme={theme}
             onThemeChange={setTheme}

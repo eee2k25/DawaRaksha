@@ -1,4 +1,5 @@
 import {
+  CalendarClock,
   Cloud,
   Cpu,
   ExternalLink,
@@ -25,11 +26,13 @@ interface ConnectionBarProps {
   error: string | null;
   syncing: boolean;
   pushing: boolean;
+  seedingBackdated: boolean;
   connectingEsp: boolean;
   espConnected: boolean;
   onConnectEsp: () => void;
   onRefresh: () => void;
   onPushTest: () => void;
+  onSeedBackdated: () => void;
   onOpenSettings: () => void;
   theme: ThemeMode;
   onThemeChange: (t: ThemeMode) => void;
@@ -45,11 +48,13 @@ export function ConnectionBar({
   error,
   syncing,
   pushing,
+  seedingBackdated,
   connectingEsp,
   espConnected,
   onConnectEsp,
   onRefresh,
   onPushTest,
+  onSeedBackdated,
   onOpenSettings,
   theme,
   onThemeChange,
@@ -224,6 +229,20 @@ export function ConnectionBar({
                 >
                   {pushing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
                   Push test reading
+                </button>
+                <button
+                  type="button"
+                  onClick={onSeedBackdated}
+                  disabled={seedingBackdated || pushing || syncing}
+                  title="Write one test reading timestamped 1 day ago (ThingSpeak created_at). Makes a quiet channel read as recent history."
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-[11px] font-semibold text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-50"
+                >
+                  {seedingBackdated ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <CalendarClock size={12} />
+                  )}
+                  Seed 1d ago
                 </button>
               </>
             )}

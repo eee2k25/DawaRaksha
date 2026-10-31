@@ -237,10 +237,26 @@ export interface WritePayload {
   eventCode?: string;
 }
 
+export interface WriteOptions {
+  /**
+   * Backdate the entry (ThingSpeak `created_at`). Useful for seeding a quiet
+   * demo channel with plausible history. ThingSpeak requires the value to be
+   * unique within the channel.
+   */
+  createdAt?: Date;
+}
+
+/** ThingSpeak accepts `YYYY-MM-DD HH:mm:ss +ZZZZ` for `created_at`. */
+function thingSpeakTimestamp(d: Date): string {
+  const iso = d.toISOString(); // 2026-10-30T09:15:00.000Z
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)} +0000`;
+}
+
 /** Upload one reading (ESP32 equivalent). Free tier: ≥15s between writes. */
 export async function writeFeed(
   payload: WritePayload,
-  cfg: ThingSpeakConfig = loadThingSpeakConfig()
+  cfg: ThingSpeakConfig = loadThingSpeakConfig(),
+  options: WriteOptions = {}
 ): Promise<number> {
   const params = new URLSearchParams({
     api_key: cfg.writeKey,
@@ -253,8 +269,19 @@ export async function writeFeed(
     field7: String(payload.gasRaw),
     field8: payload.eventCode ?? 'OK',
   });
+  if (options.createdAt) {
+    params.set('created_at', thingSpeakTimestamp(options.createdAt));
+  }
 
-  const res = await fetch(`${THINGSPEAK.baseUrl}/update?${params.toString()}`);
+  // `created_at` is documented as a request-body parameter, so backdated
+  // writes go through POST; ordinary writes keep the established GET path.
+  const res = options.createdAt
+    ? await fetch(`${THINGSPEAK.baseUrl}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      })
+    : await fetch(`${THINGSPEAK.baseUrl}/update?${params.toString()}`);
   const text = (await res.text()).trim();
   const entryId = parseInt(text, 10);
   if (!res.ok || !entryId || entryId < 1) {
