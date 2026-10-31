@@ -98,6 +98,11 @@ The dashboard is a static SPA — `npm run build` writes a self-contained
 
 ### Render (recommended for demos)
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/eee2k25/DawaRaksha)
+
+One click creates the static site from `render.yaml` (the button deploys the
+repository's default branch, so `render.yaml` must be merged to `main` first).
+
 `render.yaml` is a [Render Blueprint](https://render.com/docs/blueprint-spec)
 that defines the whole service, so there is nothing to click through:
 
