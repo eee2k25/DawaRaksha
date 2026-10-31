@@ -1,0 +1,51 @@
+# Render Blueprint — DawaRaksh operations dashboard
+# https://render.com/docs/blueprint-spec
+#
+# The dashboard is a static React + Vite SPA, so it runs as a Render Static
+# Site (no server process, free plan, global CDN). Point Render at this file
+# once (New → Blueprint) and every push to `main` redeploys automatically.
+services:
+  - type: web
+    name: dawaraksha
+    runtime: static
+    branch: main
+    autoDeployTrigger: commit
+
+    # Vite 7 requires Node ^20.19 || >=22.12.
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Served from https://<service>.onrender.com/ — not the GitHub Pages
+      # sub-path. Without this, assets would 404 under /DawaRaksha/assets/... .
+      - key: VITE_BASE_PATH
+        value: /
+      # Optional: point the deployed build at a different ThingSpeak channel.
+      # The bundled demo channel is used when these are omitted, and the
+      # in-app ⚙ Channel panel can override them at runtime anyway.
+      # - key: VITE_THINGSPEAK_CHANNEL_ID
+      #   value: 3444984
+      # - key: VITE_THINGSPEAK_READ_KEY
+      #   sync: false
+
+    headers:
+      # Vite emits content-hashed filenames, so assets can be cached forever.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      # Always revalidate the HTML so a new deploy is picked up immediately.
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache
+      - path: /
+        name: Cache-Control
+        value: no-cache
+
+    routes:
+      # Client-side routing / deep links: let the SPA handle unknown paths
+      # instead of returning Render's 404 page. Real files still win.
+      - type: rewrite
+        source: /*
+        destination: /index.html

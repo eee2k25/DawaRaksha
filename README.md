@@ -86,7 +86,59 @@ channel**, either:
 You can also press **Push test reading** to write a synthetic sample without
 hardware.
 
-## Deployment (GitHub Pages)
+## Deployment
+
+The dashboard is a static SPA — `npm run build` writes a self-contained
+`dist/` that any static host can serve. Two targets are wired up:
+
+| Host | URL | Config |
+| ---- | --- | ------ |
+| GitHub Pages | https://eee2k25.github.io/DawaRaksha/ | `.github/workflows/deploy.yml` |
+| Render | `https://<service>.onrender.com` | `render.yaml` |
+
+### Render (recommended for demos)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/eee2k25/DawaRaksha)
+
+One click creates the static site from `render.yaml` (the button deploys the
+repository's default branch, so `render.yaml` must be merged to `main` first).
+
+`render.yaml` is a [Render Blueprint](https://render.com/docs/blueprint-spec)
+that defines the whole service, so there is nothing to click through:
+
+- **Type** static site (`runtime: static`) — free, no server process, CDN-backed
+- **Build** `npm ci && npm run build`, **publish** `./dist`
+- **Node** 22 (Vite 7 needs `^20.19 || >=22.12`)
+- **`VITE_BASE_PATH=/`** — assets resolve from the domain root, not `/DawaRaksha/`
+- **Rewrite** `/* → /index.html` so deep links and refreshes load the app
+- **Cache** hashed `/assets/*` for a year, `index.html` revalidated every time
+- **Auto-deploy** on every push to `main`
+
+Deploy it:
+
+1. Push this repository to GitHub (already done).
+2. In Render: **New → Blueprint**, pick the `DawaRaksha` repo, branch `main`.
+   Render reads `render.yaml` and shows a preview of one static site.
+3. **Apply** — the first build takes ~1–2 minutes and the site goes live at
+   `https://dawaraksha.onrender.com` (name collisions get a suffix).
+4. Optional: **Settings → Custom Domain** to attach your own domain.
+
+> The Blueprint only takes effect when a service is created from it. If the
+> site already exists (created by hand in the dashboard), set these instead
+> under **Settings**: Build Command `npm ci && npm run build`, Publish
+> Directory `dist`, env var `VITE_BASE_PATH=/` (value `/`), Node version 22,
+> and a **Redirects/Rewrites** rule `/*` → `/index.html` (type **Rewrite**).
+
+Build-time channel overrides work the same as anywhere else: add
+`VITE_THINGSPEAK_CHANNEL_ID` / `VITE_THINGSPEAK_READ_KEY` in
+**Environment → Environment Variables** and redeploy. They are optional — the
+bundled demo channel is the default, and the in-app ⚙ **Channel** panel can
+switch channels at runtime without a rebuild.
+
+`VITE_*` values are baked in at build time, so changing one requires a
+redeploy (Render does that automatically when you save the variable).
+
+### GitHub Pages
 
 Live site: **https://eee2k25.github.io/DawaRaksha/**
 
@@ -100,15 +152,19 @@ Two things this repo depends on, both easy to get wrong:
    the repository root, which contains only uncompiled sources (`src/main.tsx`),
    and the browser renders a blank page.
 2. **`base` must match the repo name.** The site is served from the
-   `/DawaRaksha/` sub-path, so `vite.config.ts` sets `base: '/DawaRaksha/'` for
-   production builds. Without it, bundles are requested from
+   `/DawaRaksha/` sub-path, so the workflow builds with
+   `VITE_BASE_PATH=/DawaRaksha/` and `vite.config.ts` passes it to Vite's
+   `base`. Without it, bundles are requested from
    `eee2k25.github.io/assets/…` and 404. If the repository is ever renamed,
-   update `base` to match.
+   update the value in the workflow (and in README).
+
+Everywhere else — Render, local `npm run preview`, any root-domain host — the
+base defaults to `/`, so the same source deploys unchanged.
 
 `public/.nojekyll` stops GitHub's Jekyll pass from discarding build files whose
 names begin with an underscore.
 
-To supply a non-default ThingSpeak channel to the deployed build, set repository
+To supply a non-default ThingSpeak channel to the Pages build, set repository
 variable `VITE_THINGSPEAK_CHANNEL_ID` and secret `VITE_THINGSPEAK_READ_KEY`;
 otherwise the bundled demo channel is used.
 
@@ -127,6 +183,7 @@ excursions.
 ├── firmware/esp32/      # Arduino firmware for the container
 ├── docs/                # project presentation
 ├── .github/workflows/   # CI: build + deploy to GitHub Pages
+├── render.yaml          # Render Blueprint: static site + SPA rewrite
 └── .env.example         # optional build-time channel config
 ```
 

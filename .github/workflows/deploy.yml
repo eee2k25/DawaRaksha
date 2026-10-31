@@ -36,6 +36,10 @@ jobs:
       - name: Build
         run: npm run build
         env:
+          # Pages serves the project from this sub-path, so the bundle must
+          # reference /DawaRaksha/assets/... . Other hosts (Render) build with
+          # the default base of '/'.
+          VITE_BASE_PATH: /DawaRaksha/
           # Public ThingSpeak read credentials, supplied via repo settings.
           # Falls back to the in-app defaults when unset.
           VITE_THINGSPEAK_CHANNEL_ID: ${{ vars.VITE_THINGSPEAK_CHANNEL_ID }}
