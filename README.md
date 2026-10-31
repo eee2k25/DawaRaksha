@@ -127,7 +127,7 @@ Deploy it:
 > site already exists (created by hand in the dashboard), set these instead
 > under **Settings**: Build Command `npm ci && npm run build`, Publish
 > Directory `dist`, env var `VITE_BASE_PATH=/` (value `/`), Node version 22,
-> and a **Redirects/Rewrites** rule `/ *` → `/index.html` (type *Rewrite*).
+> and a **Redirects/Rewrites** rule `/*` → `/index.html` (type **Rewrite**).
 
 Build-time channel overrides work the same as anywhere else: add
 `VITE_THINGSPEAK_CHANNEL_ID` / `VITE_THINGSPEAK_READ_KEY` in
