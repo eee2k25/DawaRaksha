@@ -26,6 +26,9 @@ compliance-grade acknowledge workflow and historical trend charts.
   operator ID, action code and notes, stored as an audit trail.
 - **Fault simulator** — inject temperature excursions, leaks, door-open,
   gas anomalies and more; in cloud mode they are written to ThingSpeak too.
+- **Backdated sample seeding** — **Seed 1d ago** writes one test reading dated
+  24 h back via ThingSpeak's `created_at`, so a channel that has gone quiet
+  reads as recent history instead of "87d ago".
 - **CSV export** — one click exports the loaded channel history for reports.
 - **Dark / Cream themes**, fully responsive.
 
@@ -84,7 +87,10 @@ channel**, either:
 - copy `.env.example` → `.env` and set `VITE_THINGSPEAK_*` before building.
 
 You can also press **Push test reading** to write a synthetic sample without
-hardware.
+hardware, or **Seed 1d ago** to write the same sample timestamped one day
+back (ThingSpeak `created_at`). The header's *Updated …* text is the age of the
+channel's newest feed, so an untouched demo channel reads "87d ago" until a
+newer entry exists.
 
 ## Deployment
 
